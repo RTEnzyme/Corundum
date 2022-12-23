@@ -280,14 +280,14 @@ pub struct SpinLock {
 
 impl SpinLock {
     pub fn acquire(lock: *mut u8) -> Self {
-        unsafe { while std::intrinsics::atomic_cxchg_acqrel(lock, 0, 1).0 == 1 {} }
+        unsafe { while std::intrinsics::atomic_cxchg_acqrel_acquire(lock, 0, 1).0 == 1 {} }
         Self { lock }
     }
 }
 
 impl Drop for SpinLock {
     fn drop(&mut self) {
-        unsafe { std::intrinsics::atomic_store_rel(self.lock, 0); }
+        unsafe { std::intrinsics::atomic_store_release(self.lock, 0); }
     }
 }
 

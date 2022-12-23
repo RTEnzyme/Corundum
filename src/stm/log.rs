@@ -107,7 +107,7 @@ impl<A: MemPool> Notifier<A> {
         match self {
             Atomic(n) => {
                 if let Some(n) = n.as_option() {
-                    unsafe { std::intrinsics::atomic_store_rel(n.as_mut_ptr(), v) }
+                    unsafe { std::intrinsics::atomic_store_release(n.as_mut_ptr(), v) }
                 }
             }
             NonAtomic(n) => {

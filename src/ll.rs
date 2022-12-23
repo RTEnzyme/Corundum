@@ -133,6 +133,6 @@ pub fn sfence() {
 #[inline]
 pub fn mfence() {
     unsafe {
-        std::intrinsics::atomic_fence()
+        std::intrinsics::atomic_fence_seqcst()
     }
 }

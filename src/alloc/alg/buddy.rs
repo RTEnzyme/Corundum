@@ -232,7 +232,7 @@ impl<A: MemPool> BuddyAlg<A> {
         self.aux.clear();
         self.log64.foreach(|(off, data)| unsafe {
             let n = Self::buddy(off);
-            std::intrinsics::atomic_store_rel(&mut n.next, data);
+            std::intrinsics::atomic_store_release(&mut n.next, data);
         });
         self.log64.clear();
         self.available = self.available_log;

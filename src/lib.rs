@@ -102,13 +102,11 @@
 //! [`open<T>()`]: ./alloc/struct.MemPool.html#method.open
 
 #![feature(auto_traits)]
-#![feature(untagged_unions)]
 #![feature(specialization)]
 #![feature(concat_idents)]
 #![feature(core_intrinsics)]
 #![feature(thread_id_value)]
 #![feature(negative_impls)]
-#![feature(backtrace)]
 #![feature(trusted_len)]
 #![feature(exact_size_is_empty)]
 #![feature(alloc_layout_extra)]
@@ -121,7 +119,6 @@
 #![feature(type_name_of_val)]
 #![feature(pattern)]
 #![feature(str_internals)]
-#![feature(toowned_clone_into)]
 #![feature(fn_traits)]
 #![feature(unboxed_closures)]
 #![feature(let_chains)]
