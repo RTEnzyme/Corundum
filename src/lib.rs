@@ -116,6 +116,8 @@
 #![feature(trait_alias)]
 #![feature(slice_concat_trait)]
 #![feature(slice_partition_dedup)]
+#![feature(slice_ptr_get)]
+#![feature(nonnull_slice_from_raw_parts)]
 #![feature(type_name_of_val)]
 #![feature(pattern)]
 #![feature(str_internals)]

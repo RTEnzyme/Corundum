@@ -7,6 +7,7 @@ pub mod heap;
 
 pub use alg::buddy::*;
 pub use pool::*;
+pub use alg::PmemVBuddyAllocator;
 
 /// Determines how much of the `MemPool` is used for the trait object.
 ///

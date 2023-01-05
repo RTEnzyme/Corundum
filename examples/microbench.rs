@@ -1,6 +1,8 @@
 #[cfg(target_arch = "x86_64")]
 mod run {
 
+    use std::arch::asm;
+
     use corundum::measure;
     use corundum::default::{*, Journal};
     use corundum::stat::*;

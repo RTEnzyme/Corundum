@@ -110,6 +110,7 @@ pub struct BuddyAlg<A: MemPool> {
 
 #[inline]
 const fn num_bits<T>() -> u32 {
+    // << 3 means to convert bytes to bits
     (mem::size_of::<T>() << 3) as u32
 }
 
@@ -118,7 +119,9 @@ pub fn get_idx(x: usize) -> usize {
     if x == 0 {
         usize::MAX
     } else {
+        // make sure at least 8 bit to record metadata
         let x = x.max(mem::size_of::<Buddy>());
+        // find the idx, where $2^k>=x-1$
         (num_bits::<usize>() - (x - 1).leading_zeros()) as usize
     }
 }
@@ -126,7 +129,7 @@ pub fn get_idx(x: usize) -> usize {
 impl<A: MemPool> BuddyAlg<A> {
     /// Pool Initialization with a given device size
     pub fn init(&mut self, base: u64, size: usize) {
-        let mut idx = get_idx(size);
+        let mut idx = get_idx(size);  // find the smallest idx to store size Bit data
         if 1 << idx > size {
             idx -= 1;
         }
@@ -134,7 +137,7 @@ impl<A: MemPool> BuddyAlg<A> {
         self.size = 1 << idx;
         self.available = self.size;
         self.buddies[idx] = base;
-        self.last_idx = idx;
+        self.last_idx = idx;  // 最低的idx
         self.log64.clear();
         self.drop_log.clear();
         self.aux.clear();
@@ -288,22 +291,24 @@ impl<A: MemPool> BuddyAlg<A> {
                 res = self.find_free_memory(idx + 1, true)?;
             }
             if idx > 0 && split {
+                // find the tail of this buddy
                 let next = res + (1 << (idx - 1));
                 let mut curr = self.buddies[idx - 1];
                 let mut prev: Option<u64> = None;
 
                 while let Some(b) = off_to_option(curr) {
+                    // sorted by address
                     if b > next {
                         break;
                     }
                     prev = Some(b);
                     curr = Self::buddy(b).next;
                 }
-
-                if let Some(p) = prev {
+                // insert the two splitted buddy
+                if let Some(p) = prev { // inner node of a list
                     self.aux_push(next, Self::buddy(p).next);
                     self.aux_push(p, next);
-                } else {
+                } else { // head node of a list
                     self.aux_push(next, self.buddies[idx - 1]);
                     self.aux_push(Self::get_off(&self.buddies[idx - 1]), next);
                 }
@@ -390,7 +395,7 @@ impl<A: MemPool> BuddyAlg<A> {
         let end = off + (1 << idx);
         let mut curr = self.buddies[idx];
         let mut prev: Option<u64> = None;
-        if idx < self.last_idx {
+        if idx < self.last_idx { // only idx < last_idx, it can be merged
             while let Some(b) = off_to_option(curr) {
                 let e = Self::buddy(b);
                 let on_left = off & (1 << idx) == 0;
@@ -1094,10 +1099,12 @@ macro_rules! pool {
                     let quota = size / cpus;
                     self.zone = Zones::new(cpus, mem::size_of::<Self>(), quota);
                     for i in 0..cpus {
+                        // Every zone has a instance of BuddyAlg
                         self.zone[i].init((quota * i) as u64, quota);
                     }
                     self.magic_number = u64::MAX;
                     unsafe {
+                        // At the 0th zone, allocate Self data struct and cpus*BuddyAlg data struct
                         self.zone[0].alloc_impl(
                             mem::size_of::<Self>() + mem::size_of::<T>() * cpus,
                             true,
