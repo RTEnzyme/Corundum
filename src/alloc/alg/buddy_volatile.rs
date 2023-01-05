@@ -11,7 +11,7 @@ use tracing::{debug, info, span, Level, debug_span};
 use crate::utils::read_addr;
 
 #[derive(Debug, Clone)]
-/// Buddy memory blocl
+/// Buddy memory block
 /// Each memory block has some meta-data information in form of `Buddy` data
 /// structure. It has a pointer to the next buddy block, if there is any.
 struct Buddy {
@@ -49,22 +49,50 @@ fn option_to_ppter(p: Option<u64>) -> u64 {
     }
 }
 
-// let mut Pmem_V_Allocator_Default = BuddyVolatileAlg::new(0, 1024*1084*16);
-
+/// Pmem Volatile Memory Allocator Based on Buddy Algorithm
+/// 
+/// An Allocator, which implement the [`std::alloc::Allocator`] trait,
+/// can be used in std::vec::Vec<T, Allocator>, std::boxed<T, Allocator> and so on.
+/// 
+/// # Examples
+/// 
+/// It can replace the [`std::alloc::System`] as memory allocator of many std data structures.
+/// 
+/// ```
+/// # use crate::alloc::PmemVBuddyAllocator;
+/// # fn main() {
+/// type VP = PmemVBuddyAllocator;
+/// let mut v = Vec::new_in(VP::new("/mnt/pmemdir", 1024*16));
+/// v.push(0);
+/// v.push(1);
+/// v.push(2);
+/// v.iter().enumerate()
+/// .foreach(|i, v| {
+///     assert_eq!(i, *v);
+/// })
+/// # }
+/// ```
+/// 
 pub struct PmemVBuddyAllocator {
-    /// the path /path/to/pmem_dir
-    // pmem_path: PathBuf,
+    /// tempfile which stores the content of Allocator 
     tempfile: File,
 
+    /// mmap mut address space
     mmap: MmapMut,
+
     /// the device size
     size: usize,
 
-    // the instance of BuddyVolatileAlg
+    /// the instance of BuddyVolatileAlg
     buddy_alg: RefCell<BuddyVolatileAlg>,
 }
 
 impl PmemVBuddyAllocator {
+
+    /// Create a new `PmemVBuddyAllocator` Allocator
+    /// 
+    /// * `path` is the file/to/pmemdir path
+    /// * `size` is the device size 
     pub fn new(path: PathBuf, size: usize) -> Self {
         info!("Instance a new PmemVBuddyAllocator");
         let tempfile = tempfile::tempfile_in(path).unwrap();
@@ -87,12 +115,26 @@ impl PmemVBuddyAllocator {
     }
 }
 
-/// Implement the std::alloc::Allocator for Pmem_V_Buddy_Allocator
+/// Implement the [std::alloc::Allocator] for Pmem_V_Buddy_Allocator
 /// So, we can use Pmem_V_buddy_Allocator as many std data structs' Allocator
 /// We can use std::Boxed<T, Pmem_V_Buddy_Allocator> to treat pmem as the large 
 /// scalabity volatile memory.
 /// 
 unsafe impl Allocator for PmemVBuddyAllocator {
+    /// Attempts to allocate a block of memory.
+    ///
+    /// On success, returns a [`NonNull<[u8]>`][NonNull] meeting the size and alignment guarantees of `layout`.
+    ///
+    /// The returned block may have a larger size than specified by `layout.size()`, and may or may
+    /// not have its contents initialized.
+    ///
+    /// # Errors
+    ///
+    /// Returning `Err` indicates that either memory is exhausted or `layout` does not meet
+    /// allocator's size or ~~alignment~~ constraints.
+    ///
+    /// Clients wishing to abort computation in response to an allocation error are encouraged to
+    /// call the [`std::alloc::handle_alloc_error`] function, rather than directly invoking `panic!` or similar.
     fn allocate(&self, layout: std::alloc::Layout) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
         let span = span!(Level::DEBUG, "Allocate");
         let _enter = span.enter();
@@ -106,6 +148,15 @@ unsafe impl Allocator for PmemVBuddyAllocator {
         }
     }
 
+    /// Deallocates the memory referenced by `ptr`.
+    ///
+    /// # Safety
+    ///
+    /// * `ptr` must denote a block of memory [*currently allocated*] via this allocator, and
+    /// * `layout` must [*fit*] that block of memory.
+    ///
+    /// [*currently allocated*]: #currently-allocated-memory
+    /// [*fit*]: #memory-fitting
     unsafe fn deallocate(&self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) {
         debug!("free {} bytes layout", layout.size());
         unsafe {
@@ -113,6 +164,15 @@ unsafe impl Allocator for PmemVBuddyAllocator {
         }
     }
 
+    /// Behaves like `allocate`, but also ensures that the returned memory is zero-initialized.
+    ///
+    /// # Errors
+    ///
+    /// Returning `Err` indicates that either memory is exhausted or `layout` does not meet
+    /// allocator's size or alignment constraints.
+    ///
+    /// Clients wishing to abort computation in response to an allocation error are encouraged to
+    /// call the [`handle_alloc_error`] function, rather than directly invoking `panic!` or similar.
     fn allocate_zeroed(&self, layout: std::alloc::Layout) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
         let ptr = self.allocate(layout)?;
         // SAFETY: `alloc` returns a valid memory block
@@ -120,6 +180,38 @@ unsafe impl Allocator for PmemVBuddyAllocator {
         Ok(ptr)
     }
 
+    /// Attempts to extend the memory block.
+    ///
+    /// Returns a new [`NonNull<[u8]>`][NonNull] containing a pointer and the actual size of the allocated
+    /// memory. The pointer is suitable for holding data described by `new_layout`. To accomplish
+    /// this, the allocator may extend the allocation referenced by `ptr` to fit the new layout.
+    ///
+    /// If this returns `Ok`, then ownership of the memory block referenced by `ptr` has been
+    /// transferred to this allocator. Any access to the old `ptr` is Undefined Behavior, even if the
+    /// allocation was grown in-place. The newly returned pointer is the only valid pointer
+    /// for accessing this memory now.
+    ///
+    /// If this method returns `Err`, then ownership of the memory block has not been transferred to
+    /// this allocator, and the contents of the memory block are unaltered.
+    ///
+    /// # Safety
+    ///
+    /// * `ptr` must denote a block of memory [*currently allocated*] via this allocator.
+    /// * `old_layout` must [*fit*] that block of memory (The `new_layout` argument need not fit it.).
+    /// * `new_layout.size()` must be greater than or equal to `old_layout.size()`.
+    ///
+    /// Note that `new_layout.align()` need not be the same as `old_layout.align()`.
+    ///
+    /// [*currently allocated*]: #currently-allocated-memory
+    /// [*fit*]: #memory-fitting
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the new layout does not meet the allocator's size and alignment
+    /// constraints of the allocator, or if growing otherwise fails.
+    ///
+    /// Clients wishing to abort computation in response to an allocation error are encouraged to
+    /// call the [`handle_alloc_error`] function, rather than directly invoking `panic!` or similar.
     unsafe fn grow(
         &self,
         ptr: std::ptr::NonNull<u8>,
@@ -146,6 +238,41 @@ unsafe impl Allocator for PmemVBuddyAllocator {
         Ok(new_ptr)
     }
 
+    /// Behaves like `grow`, but also ensures that the new contents are set to zero before being
+    /// returned.
+    ///
+    /// The memory block will contain the following contents after a successful call to
+    /// `grow_zeroed`:
+    ///   * Bytes `0..old_layout.size()` are preserved from the original allocation.
+    ///   * Bytes `old_layout.size()..old_size` will either be preserved or zeroed, depending on
+    ///     the allocator implementation. `old_size` refers to the size of the memory block prior
+    ///     to the `grow_zeroed` call, which may be larger than the size that was originally
+    ///     requested when it was allocated.
+    ///   * Bytes `old_size..new_size` are zeroed. `new_size` refers to the size of the memory
+    ///     block returned by the `grow_zeroed` call.
+    ///
+    /// # Safety
+    ///
+    /// * `ptr` must denote a block of memory [*currently allocated*] via this allocator.
+    /// * `old_layout` must [*fit*] that block of memory (The `new_layout` argument need not fit it.).
+    /// * `new_layout.size()` must be greater than or equal to `old_layout.size()`.
+    ///
+    /// Note that `new_layout.align()` need not be the same as `old_layout.align()`.
+    ///
+    /// [*currently allocated*]: #currently-allocated-memory
+    /// [*fit*]: #memory-fitting
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the new layout does not meet the allocator's size and alignment
+    /// constraints of the allocator, or if growing otherwise fails.
+    ///
+    /// Implementations are encouraged to return `Err` on memory exhaustion rather than panicking or
+    /// aborting, but this is not a strict requirement. (Specifically: it is *legal* to implement
+    /// this trait atop an underlying native allocation library that aborts on memory exhaustion.)
+    ///
+    /// Clients wishing to abort computation in response to an allocation error are encouraged to
+    /// call the [`handle_alloc_error`] function, rather than directly invoking `panic!` or similar.
     unsafe fn grow_zeroed(
         &self,
         ptr: std::ptr::NonNull<u8>,
