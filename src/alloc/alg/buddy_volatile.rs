@@ -455,6 +455,9 @@ impl BuddyVolatileAlg {
     }
 
     #[inline]
+    /// find free memory block in self.buddies
+    /// 
+    /// * `Option<u64>` is the off of the base address
     unsafe fn find_free_memory(&mut self, idx: usize, split: bool) -> Option<u64> {
         debug!("find free memory in idx {idx:} and {split:} split.");
         if idx > self.last_idx {
@@ -463,12 +466,8 @@ impl BuddyVolatileAlg {
             let res;
             if let Some(b) = off_to_option(self.buddies[idx]) {
                 // Remove the available block and return it
-                unsafe {
-                    debug!("{}", self.base);
-                    debug!("{:?}", read_addr::<u64>(self.base));
-                }
                 let buddy = self.buddy(b);
-                debug!("remove one {idx:} idx block. The head of list is {}.", self.buddies[idx]);
+                debug!("remove one {idx:} idx buddy. The head of list is {}.", self.buddies[idx]);
                 self.perform(self.buddies[idx], buddy.next);
                 res = b;
             } else {
@@ -509,8 +508,9 @@ impl BuddyVolatileAlg {
     /// If successful, tt returns the offset of the available free block.
     /// otherwise, `u64::MAX` is returned.
     pub unsafe fn alloc_impl(&mut self, len: usize) -> u64 {
-        let span = span!(Level::DEBUG, "Buddy alloc");
+        let span = debug_span!("Buddy alloc");
         let _enter = span.enter();
+
         debug!("Allocate {len:} bytes");
         let idx = get_idx(len);
         let len = 1 << idx;
@@ -521,6 +521,7 @@ impl BuddyVolatileAlg {
             match self.find_free_memory(idx, false) {
                 Some(off) => {
                     self.available -= len;
+                    // generate the absolute address
                     res = off + self.base;
                 }
                 None => {
@@ -539,17 +540,20 @@ impl BuddyVolatileAlg {
     #[inline]
     /// Generates required changes to the meta-data for reclaiming the memory
     /// block at offset `off` with the size of `len`.
-    pub unsafe fn dealloc_impl(&mut self, off: u64, len: usize) {
+    pub unsafe fn dealloc_impl(&mut self, addr: u64, len: usize) {
+        let span = debug_span!("dealloc {len:} bytes space at {off:} addr");
+        let _enter = span.enter();
         let idx = get_idx(len);
         let len = 1 << idx;
 
-        self.free_impl(off, len);
+        self.free_impl(addr, len);
     }
 
     #[inline]
-    unsafe fn free_impl(&mut self, off: u64, len: usize) {
+    unsafe fn free_impl(&mut self, addr: u64, len: usize) {
+        let off = addr - self.base;
         let idx = get_idx(len);
-        debug!("free {idx:} idx block, {off:} off and {len:} len.");
+        debug!("free {idx:} idx block, {addr:} addr and {len:} len.");
         let end = off + (1 << idx);
         let mut curr = self.buddies[idx];
         let mut prev: Option<u64> = None;
@@ -557,9 +561,8 @@ impl BuddyVolatileAlg {
             while let Some(b) = off_to_option(curr) {
                 // get current Buddy, e is the next Buddy addr.
                 let e = self.buddy(b);
-                let on_left = off & (1 << idx) == 0;
+                let on_left = addr & (1 << idx) == 0;
                 if (b == end && on_left) || (b + len as u64 == off && !on_left) {
-                    let off = off - self.base;
                     let off = off.min(b);
                     if let Some(p) = prev {
                         self.perform(p, e.next);
@@ -579,7 +582,7 @@ impl BuddyVolatileAlg {
                 debug_assert_ne!(curr, b, "Cyclic link in free_impl");
             }
         }
-        let off = off - self.base;
+
         if let Some(p) = prev {
             self.perform(off, self.buddy(p).next);
             self.perform(p, off);
